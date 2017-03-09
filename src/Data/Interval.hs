@@ -94,7 +94,7 @@ import Data.Monoid
 import Data.Ratio
 import qualified Data.List.NonEmpty  as Non
 
-import GHC.Generics
+import GHC.Generics hiding (Prefix)
 import Data.Ratio
 import Prelude hiding (null)
 
@@ -123,7 +123,7 @@ infix 4 /=??
 
 -- | The intervals (/i.e./ connected and convex subsets) over real numbers __R__.
 data Interval r = Interval !(Extended r, Bool) !(Extended r, Bool)
-  deriving (Eq, Typeable,Show,Read,Typeable,Generic)
+  deriving (Eq, Show,Read,Functor,Foldable,Traversable,Typeable,Typeable,Generic)
 
 #if __GLASGOW_HASKELL__ >= 708
 type role Interval nominal
@@ -163,6 +163,8 @@ upperBound' :: Interval r -> (Extended r, Bool)
 upperBound' (Interval _ ub) = ub
 {-# INLINE upperBound' #-}
 
+instance Binary r => Binary (Interval r) where
+
 instance NFData r => NFData (Interval r) where
   rnf (Interval lb ub) = rnf lb `seq` rnf ub
 
@@ -185,39 +187,6 @@ instance (Ord r) => BoundedMeetSemiLattice (Interval r) where
 
 instance (Ord r) => BoundedLattice (Interval r)
 
-instance (Ord r, Show r) => Show (Interval r) where
-  showsPrec _ x | null x = showString "empty"
-  showsPrec p (Interval (lb,in1) (ub,in2)) =
-    showParen (p > rangeOpPrec) $
-      showsPrec (rangeOpPrec+1) lb .
-      showChar ' ' . showString op . showChar ' ' .
-      showsPrec (rangeOpPrec+1) ub
-    where
-      op = (if in1 then "<=" else "<") ++ ".." ++ (if in2 then "<=" else "<")
-
-instance (Ord r, Read r) => Read (Interval r) where
-  readsPrec p r =
-    (readParen (p > appPrec) $ \s0 -> do
-      ("interval",s1) <- lex s0
-      (lb,s2) <- readsPrec (appPrec+1) s1
-      (ub,s3) <- readsPrec (appPrec+1) s2
-      return (interval lb ub, s3)) r
-    ++
-    (readParen (p > rangeOpPrec) $ \s0 -> do
-      (do (l,s1) <- readsPrec (rangeOpPrec+1) s0
-          (op',s2) <- lex s1
-          op <-
-            case op' of
-              "<=..<=" -> return (<=..<=)
-              "<..<="  -> return (<..<=)
-              "<=..<"  -> return (<=..<)
-              "<..<"   -> return (<..<)
-              _ -> []
-          (u,s3) <- readsPrec (rangeOpPrec+1) s2
-          return (op l u, s3))) r
-    ++
-    (do ("empty", s) <- lex r
-        return (empty, s))
 
 -- This instance preserves data abstraction at the cost of inefficiency.
 -- We provide limited reflection services for the sake of data abstraction.
