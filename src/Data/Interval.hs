@@ -1,5 +1,5 @@
 {-# OPTIONS_GHC -Wall #-}
-{-# LANGUAGE CPP, ScopedTypeVariables, DeriveDataTypeable #-}
+{-# LANGUAGE CPP, ScopedTypeVariables, DeriveFoldable,DeriveTraversable,DeriveFunctor,StandaloneDeriving,DeriveGeneric,DeriveDataTypeable #-}
 {-# LANGUAGE Safe #-}
 #if __GLASGOW_HASKELL__ >= 708
 {-# LANGUAGE RoleAnnotations #-}
@@ -28,7 +28,7 @@
 module Data.Interval
   (
   -- * Interval type
-    Interval
+    Interval(..)
   , module Data.ExtendedReal
   , EndPoint
 
@@ -75,6 +75,8 @@ module Data.Interval
 
   -- * Operations
   , pickup
+  ,split
+  ,difference
   , simplestRationalWithin
   ) where
 
@@ -83,11 +85,16 @@ import Control.DeepSeq
 import Control.Exception (assert)
 import Control.Monad hiding (join)
 import Data.Data
+import Data.Binary
 import Data.ExtendedReal
 import Data.Hashable
 import Data.List hiding (null)
 import Data.Maybe
 import Data.Monoid
+import Data.Ratio
+import qualified Data.List.NonEmpty  as Non
+
+import GHC.Generics
 import Data.Ratio
 import Prelude hiding (null)
 
@@ -116,7 +123,7 @@ infix 4 /=??
 
 -- | The intervals (/i.e./ connected and convex subsets) over real numbers __R__.
 data Interval r = Interval !(Extended r, Bool) !(Extended r, Bool)
-  deriving (Eq, Typeable)
+  deriving (Eq, Typeable,Show,Read,Typeable,Generic)
 
 #if __GLASGOW_HASKELL__ >= 708
 type role Interval nominal
@@ -131,6 +138,7 @@ type role Interval nominal
 -- * 'lowerBound' of an interval may or may not be a member of the interval.
 lowerBound :: Interval r -> Extended r
 lowerBound (Interval (lb,_) _) = lb
+{-# INLINE lowerBound #-}
 
 -- | Upper endpoint (/i.e./ least upper bound) of the interval.
 --
@@ -141,16 +149,19 @@ lowerBound (Interval (lb,_) _) = lb
 -- * 'upperBound' of an interval may or may not be a member of the interval.
 upperBound :: Interval r -> Extended r
 upperBound (Interval _ (ub,_)) = ub
+{-# INLINE upperBound #-}
 
 -- | 'lowerBound' of the interval and whether it is included in the interval.
 -- The result is convenient to use as an argument for 'interval'.
 lowerBound' :: Interval r -> (Extended r, Bool)
 lowerBound' (Interval lb _) = lb
+{-# INLINE lowerBound' #-}
 
 -- | 'upperBound' of the interval and whether it is included in the interval.
 -- The result is convenient to use as an argument for 'interval'.
 upperBound' :: Interval r -> (Extended r, Bool)
 upperBound' (Interval _ ub) = ub
+{-# INLINE upperBound' #-}
 
 instance NFData r => NFData (Interval r) where
   rnf (Interval lb ub) = rnf lb `seq` rnf ub
@@ -178,7 +189,7 @@ instance (Ord r, Show r) => Show (Interval r) where
   showsPrec _ x | null x = showString "empty"
   showsPrec p (Interval (lb,in1) (ub,in2)) =
     showParen (p > rangeOpPrec) $
-      showsPrec (rangeOpPrec+1) lb . 
+      showsPrec (rangeOpPrec+1) lb .
       showChar ' ' . showString op . showChar ' ' .
       showsPrec (rangeOpPrec+1) ub
     where
@@ -234,7 +245,7 @@ interval
   -> Interval r
 interval lb@(x1,in1) ub@(x2,in2) =
   case x1 `compare` x2 of
-    GT -> empty --  empty interval
+    GT -> Interval lb ub
     LT -> Interval (normalize lb) (normalize ub)
     EQ -> if in1 && in2 && isFinite x1 then Interval lb ub else empty
   where
@@ -305,7 +316,23 @@ intersection (Interval l1 u1) (Interval l2 u2) = interval (maxLB l1 l2) (minUB u
           LT -> in1
           GT -> in2
       )
+-- | intersection of two intervals
+split :: forall r. Ord r => r -> Interval r -> Maybe (Non.NonEmpty (Interval r))
+split l1 int@(Interval (l2,b) (u2,c))
+  | member l1 int && Finite l1 == l2 =  Just $ Non.fromList [(Interval (Finite l1,False) (u2,c) )]
+  | member l1 int && Finite l1 == u2 = Just $ Non.fromList[(Interval (Finite l1,b) (u2,False) )]
+  | member l1 int = Just $ Non.fromList [ Interval (l2,b) (Finite l1,False),Interval (Finite l1,False) (u2,c) ]
+  | otherwise = Nothing
 
+difference :: forall r. Ord r => Interval r -> Interval r -> Maybe (Non.NonEmpty (Interval r))
+difference  i1@(Interval l1 l2) i2@(Interval u1 u2)
+  | null inter = Nothing
+  | inter == i1 = Just $ Non.fromList [i1]
+  | inter == i2 =Just $ Non.fromList [Interval l1 u1 ,Interval u2 l2]
+  | upperBound inter  == upperBound i1 =  Just $ Non.fromList [Interval l1 o1 ]
+  | lowerBound inter  == lowerBound i1 =  Just $ Non.fromList [Interval o2 l2 ]
+  | otherwise = error "no match"
+    where inter@(Interval o1 o2) =  intersection i1 i2
 -- | intersection of a list of intervals.
 --
 -- Since 0.6.0
